@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>Spider</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      height: 100vh; display: flex; flex-direction: column;
+      font-family: "Microsoft YaHei", sans-serif; background: #f7f5f2;
+    }
+    #header {
+      padding: 10px 16px; background: #2c2c3e; color: #fff;
+      font-size: 15px; font-weight: bold; display: flex; align-items: center; justify-content: space-between;
+    }
+    #diary-btn {
+      border: none; background: #ffd23f; color: #2c2c3e; border-radius: 12px;
+      padding: 4px 12px; font-size: 13px; font-weight: bold; cursor: pointer;
+    }
+    #vitals-bar {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      padding: 8px 14px; background: #fff; border-bottom: 1px solid #eee; font-size: 13px;
+    }
+    #vitals-text { color: #555; white-space: nowrap; }
+    #vitals-btns { display: flex; gap: 6px; }
+    #vitals-btns button {
+      border: 1px solid #e0e0e0; background: #fafafa; border-radius: 14px;
+      padding: 4px 10px; font-size: 12px; cursor: pointer;
+    }
+    #vitals-btns button:hover { background: #f0e0d0; }
+    #debug-bar {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+      padding: 6px 14px; background: #fff7ec; border-bottom: 1px dashed #e0c9a6; font-size: 12px;
+    }
+    #debug-bar button {
+      border: 1px solid #e8c894; background: #fff; border-radius: 12px;
+      padding: 3px 9px; font-size: 12px; cursor: pointer;
+    }
+    #debug-bar button:hover { background: #ffe9c7; }
+    #messages {
+      flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px;
+    }
+    .msg { max-width: 82%; padding: 9px 12px; border-radius: 14px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+    .msg.user { align-self: flex-end; background: #e8934a; color: #fff; border-bottom-right-radius: 4px; }
+    .msg.assistant { align-self: flex-start; background: #fff; color: #333; border: 1px solid #eee; border-bottom-left-radius: 4px; }
+    .msg.error { align-self: flex-start; background: #ffe3e3; color: #b33; }
+    #input-row { display: flex; padding: 10px; gap: 8px; border-top: 1px solid #eee; background: #fff; }
+    #input { flex: 1; padding: 9px 12px; border: 1px solid #ddd; border-radius: 18px; outline: none; font-size: 14px; }
+    #send { padding: 0 18px; border: none; border-radius: 18px; background: #e8934a; color: #fff; font-size: 14px; cursor: pointer; }
+    #send:disabled { background: #ccc; }
+  </style>
+</head>
+<body>
+  <div id="header"><span>🐱 Spider</span><button id="diary-btn">📖 日记</button></div>
+  <div id="vitals-bar">
+    <span id="vitals-text">读取中…</span>
+    <span id="vitals-btns">
+      <button data-act="feed" title="喂食">🍖 喂食</button>
+      <button data-act="pet" title="抚摸">✋ 抚摸</button>
+      <button data-act="play" title="玩耍">🎾 玩耍</button>
+      <button data-act="wake" title="叫醒">😴 叫醒</button>
+    </span>
+  </div>
+  <div id="debug-bar">
+    <span style="color:#b08a4a">演示主动触发：</span>
+    <button data-demo="hungry">🍖 饥饿讨食</button>
+    <button data-demo="bored">😔 无聊求陪</button>
+    <button data-demo="latenight">🌙 深夜提醒</button>
+    <button data-demo="meal">🍚 饭点提醒</button>
+    <button data-demo="overwork">💪 过劳提醒</button>
+  </div>
+  <div id="messages"></div>
+  <div id="input-row">
+    <input id="input" placeholder="和 Spider 说点什么…（按回车发送）" />
+    <button id="send">发送</button>
+  </div>
+
+  <script>
+    var messagesEl = document.getElementById('messages');
+    var input = document.getElementById('input');
+    var sendBtn = document.getElementById('send');
+    var vitalsText = document.getElementById('vitals-text');
+    var chatHistory = []; // 避开 window.history 全局变量
+
+    function addMsg(role, text) {
+      var div = document.createElement('div');
+      div.className = 'msg ' + role;
+      div.textContent = text;
+      messagesEl.appendChild(div);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function renderVitals(v) {
+      vitalsText.textContent = '精力 ' + v.energy + ' | 饱食 ' + v.satiety + ' | 心情 ' + v.mood + '（' + v.emotionLabel + '）' + (v.sleeping ? ' · 睡觉中' : '');
+    }
+
+    async function refreshVitals() {
+      try { renderVitals(await window.spider.getVitals()); } catch (e) { vitalsText.textContent = '状态读取失败'; }
+    }
+
+    async function doAction(act) {
+      var fn = { feed: window.spider.feed, pet: window.spider.pet, play: window.spider.play, wake: window.spider.wake }[act];
+      if (!fn) return;
+      try { renderVitals(await fn()); } catch (e) { console.error(e); }
+    }
+
+    async function send() {
+      var text = input.value.trim();
+      if (!text) return;
+      addMsg('user', text);
+      input.value = '';
+      sendBtn.disabled = true;
+
+      try {
+        var res = await window.spider.chat(text, chatHistory);
+        if (res.ok) {
+          addMsg('assistant', res.reply);
+          chatHistory.push({ role: 'user', content: text });
+          chatHistory.push({ role: 'assistant', content: res.reply });
+          refreshVitals(); // 对话会消耗精力（token 吞吐）
+        } else {
+          addMsg('error', '出错：' + res.error);
+        }
+      } catch (e) {
+        console.error('[chat] error:', e);
+        addMsg('error', '出错：' + e.message);
+      }
+      sendBtn.disabled = false;
+      input.focus();
+    }
+
+    sendBtn.addEventListener('click', send);
+    input.addEventListener('keydown', function (e) { if (e.key === 'Enter') send(); });
+    document.getElementById('diary-btn').addEventListener('click', function () { window.spider.openDiary(); });
+    document.querySelectorAll('#vitals-btns button').forEach(function (btn) {
+      btn.addEventListener('click', function () { doAction(btn.dataset.act); });
+    });
+    document.querySelectorAll('#debug-bar button').forEach(function (btn) {
+      btn.addEventListener('click', async function () {
+        var msg = await window.spider.debugFire(btn.dataset.demo);
+        if (msg) addMsg('assistant', msg);
+      });
+    });
+
+    addMsg('assistant', '喵～我是 Spider！可以帮你设提醒、记待办、查天气、打开网页。上面还能喂我、摸我、跟我玩哦～');
+    refreshVitals();
+  </script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "name": "spider",
+  "version": "0.1.0",
+  "description": "Spider —— 一只生活在桌面上的具身智能体（AI 桌宠）",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^45.2.1"
+  },
+  "dependencies": {
+    "jimp": "^0.22.12"
+  }
+}
