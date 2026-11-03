@@ -88,6 +88,7 @@
       div.textContent = text;
       messagesEl.appendChild(div);
       messagesEl.scrollTop = messagesEl.scrollHeight;
+      return div;
     }
 
     function renderVitals(v) {
@@ -104,6 +105,17 @@
       try { renderVitals(await fn()); } catch (e) { console.error(e); }
     }
 
+    // 流式气泡注册表：chatId -> 正在接收的助手气泡
+    var streamBubbles = {};
+    var chatSeq = 0;
+    window.spider && window.spider.onChatDelta(function (payload) {
+      var s = streamBubbles[payload.chatId];
+      if (!s || payload.chunk == null) return;
+      s.text += payload.chunk;
+      s.el.textContent = s.text;
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    });
+
     async function send() {
       var text = input.value.trim();
       if (!text) return;
@@ -111,19 +123,27 @@
       input.value = '';
       sendBtn.disabled = true;
 
+      var chatId = 'c' + (++chatSeq) + '_' + Date.now();
+      var bubble = addMsg('assistant', '');
+      streamBubbles[chatId] = { el: bubble, text: '' };
+
       try {
-        var res = await window.spider.chat(text, chatHistory);
+        var res = await window.spider.chat(text, chatHistory, chatId);
+        delete streamBubbles[chatId];
         if (res.ok) {
-          addMsg('assistant', res.reply);
+          bubble.textContent = res.reply; // 最终结果兜底（与流式一致）
           chatHistory.push({ role: 'user', content: text });
           chatHistory.push({ role: 'assistant', content: res.reply });
           refreshVitals(); // 对话会消耗精力（token 吞吐）
         } else {
-          addMsg('error', '出错：' + res.error);
+          bubble.className = 'msg error';
+          bubble.textContent = '出错：' + res.error;
         }
       } catch (e) {
         console.error('[chat] error:', e);
-        addMsg('error', '出错：' + e.message);
+        delete streamBubbles[chatId];
+        bubble.className = 'msg error';
+        bubble.textContent = '出错：' + e.message;
       }
       sendBtn.disabled = false;
       input.focus();

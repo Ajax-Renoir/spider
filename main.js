@@ -8,6 +8,7 @@ const triggers = require('./agent/triggers');
 const habits = require('./agent/habits');
 const perception = require('./agent/perception');
 const reflection = require('./agent/reflection');
+const autonomy = require('./agent/autonomy');
 
 let petWindow = null;
 let chatWindow = null;
@@ -150,6 +151,16 @@ ipcMain.on('drag-move', (e) => {
 });
 ipcMain.on('drag-end', () => { dragOffset = null; isDragging = false; });
 
+// 宠物窗随气泡内容增高（底部对齐，向上生长）
+ipcMain.on('pet-resize', (e, { height }) => {
+  if (!petWindow || petWindow.isDestroyed()) return;
+  const [x, y] = petWindow.getPosition();
+  const cur = petWindow.getSize();
+  const h = Math.max(180, Math.min(Math.round(height || PET_HEIGHT), 520));
+  const newY = y + cur[1] - h;
+  petWindow.setBounds({ x, y: newY, width: PET_WIDTH, height: h });
+});
+
 // —— 打开聊天 ——
 ipcMain.on('open-chat', () => createChatWindow());
 
@@ -159,9 +170,11 @@ ipcMain.handle('diary-list', () => diary.list());
 ipcMain.handle('diary-read', (e, date) => diary.read(date));
 
 // —— 聊天 ——
-ipcMain.handle('agent-chat', async (e, { msg, history }) => {
+ipcMain.handle('agent-chat', async (e, { msg, history, chatId }) => {
   try {
-    const reply = await agent.runAgent(msg, history || []);
+    const reply = await agent.runAgent(msg, history || [], (chunk) => {
+      if (chatId && e.sender && !e.sender.isDestroyed()) e.sender.send('agent-chat-delta', { chatId, chunk });
+    });
     petSpeak(reply);
     return { ok: true, reply };
   } catch (err) {
@@ -202,7 +215,7 @@ app.whenReady().then(() => {
       const idleSec = powerMonitor.getSystemIdleTime();
       perception.update(idleSec);           // 情绪感知：忙/空闲/离开
       if (idleSec < 90) habits.markActive(); // 习惯学习：记录用户活跃时段
-      triggers.check(idleSec).then((m) => { if (m) petSpeak(m); }).catch(() => {});
+      autonomy.onMinute(idleSec).then((m) => { if (m) { petSpeak(m); petAnim('happy'); } }).catch((e) => console.error('[autonomy]', e && e.message));
     } catch (e) {}
   }, 60 * 1000);
 

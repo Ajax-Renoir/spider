@@ -6,7 +6,8 @@ contextBridge.exposeInMainWorld('spider', {
   dragMove: () => ipcRenderer.send('drag-move'),
   dragEnd: () => ipcRenderer.send('drag-end'),
   openChat: () => ipcRenderer.send('open-chat'),
-  chat: (msg, history) => ipcRenderer.invoke('agent-chat', { msg, history }),
+  chat: (msg, history, chatId) => ipcRenderer.invoke('agent-chat', { msg, history, chatId }),
+  onChatDelta: (cb) => ipcRenderer.on('agent-chat-delta', (e, payload) => cb(payload)),
   // 日记
   openDiary: () => ipcRenderer.send('open-diary'),
   listDiary: () => ipcRenderer.invoke('diary-list'),
@@ -21,6 +22,7 @@ contextBridge.exposeInMainWorld('spider', {
   onAnim: (cb) => ipcRenderer.on('pet-anim', (e, type) => cb(type)),
   // 说话气泡
   onSpeak: (cb) => ipcRenderer.on('pet-speak', (e, text) => cb(text)),
+  resizePet: (height) => ipcRenderer.send('pet-resize', { height }),
   // 调试：演示主动触发
   debugFire: (type) => ipcRenderer.invoke('debug-fire', type),
 });

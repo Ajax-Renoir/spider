@@ -1,6 +1,7 @@
-const { shell, Notification } = require('electron');
+const { shell, Notification, clipboard } = require('electron');
 const { exec } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const memory = require('./memory');
 
@@ -9,6 +10,7 @@ const dataDir = path.join(__dirname, '..', 'data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 const REMINDERS_FILE = path.join(dataDir, 'reminders.json');
 const TODOS_FILE = path.join(dataDir, 'todos.json');
+const WORKSPACE_DIR = path.join(dataDir, 'workspace'); // 文件读写默认工作区
 
 function readJson(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
@@ -133,6 +135,65 @@ const definitions = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'list_reminders',
+      description: '列出所有已设置的提醒',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'cancel_reminder',
+      description: '取消一条提醒（按序号）',
+      parameters: { type: 'object', properties: { id: { type: 'integer', description: '提醒序号' } }, required: ['id'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_file',
+      description: '读取一个文本文件的内容（写绝对路径，或 桌面/xxx.txt、下载/xxx.txt 这类位置）',
+      parameters: { type: 'object', properties: { path: { type: 'string', description: '文件路径，如 桌面/周记.txt 或 D:/xxx.txt' } }, required: ['path'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'write_file',
+      description: '把内容写成一个文本文件（写笔记、周记、报告等）',
+      parameters: { type: 'object', properties: {
+        path: { type: 'string', description: '保存路径，如 桌面/周记.txt' },
+        content: { type: 'string', description: '要写入的完整内容' },
+      }, required: ['path', 'content'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_dir',
+      description: '列出一个目录下的文件（默认工作区，可给 桌面/下载/文档 等位置）',
+      parameters: { type: 'object', properties: { path: { type: 'string', description: '目录路径，可省略' } } },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_clipboard',
+      description: '读取剪贴板里的文本',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'set_clipboard',
+      description: '把文本写入剪贴板，方便主人直接粘贴',
+      parameters: { type: 'object', properties: { text: { type: 'string', description: '要复制的文本' } }, required: ['text'] },
+    },
+  },
 ];
 
 // ================= 工具实现 =================
@@ -236,8 +297,72 @@ function remember(args) { return memory.remember(args.text, args.tags); }
 function set_preference(args) { return memory.addPreference(args.text); }
 function correct(args) { return memory.correct(args.old_text || '', args.new_text); }
 
+// —— 提醒列表 / 取消 ——
+function list_reminders() {
+  const reminders = readJson(REMINDERS_FILE, []);
+  if (!reminders.length) return '当前没有提醒';
+  return reminders.map((r, i) => `${r.done ? '✅' : '⏰'} #${i + 1} ${r.text}（${new Date(r.time).toLocaleString('zh-CN', { hour12: false })}）`).join('\n');
+}
+function cancel_reminder({ id }) {
+  const reminders = readJson(REMINDERS_FILE, []);
+  const idx = id - 1;
+  if (idx < 0 || idx >= reminders.length) return `没有 #${id} 这条提醒`;
+  const [r] = reminders.splice(idx, 1);
+  if (scheduled[r.id]) clearTimeout(scheduled[r.id]);
+  writeJson(REMINDERS_FILE, reminders);
+  return `已取消提醒：${r.text}`;
+}
+
+// —— 文件读写 / 剪贴板 ——
+function resolvePath(p) {
+  if (!p) return WORKSPACE_DIR;
+  const home = os.homedir();
+  const map = {
+    '桌面': path.join(home, 'Desktop'),
+    '下载': path.join(home, 'Downloads'),
+    '文档': path.join(home, 'Documents'),
+    '工作区': WORKSPACE_DIR,
+  };
+  for (const k of Object.keys(map)) {
+    if (p === k) return map[k];
+    if (p.startsWith(k + '/') || p.startsWith(k + '\\')) return path.join(map[k], p.slice(k.length + 1));
+  }
+  return path.isAbsolute(p) ? p : path.join(WORKSPACE_DIR, p);
+}
+function read_file({ path: p }) {
+  const fp = resolvePath(p);
+  try {
+    const s = fs.readFileSync(fp, 'utf8');
+    return s.length > 8000 ? s.slice(0, 8000) + '\n…（内容过长已截断）' : s;
+  } catch (e) { return `读不到文件 ${fp}：${e.message}`; }
+}
+function write_file({ path: p, content }) {
+  const fp = resolvePath(p);
+  try {
+    fs.mkdirSync(path.dirname(fp), { recursive: true });
+    fs.writeFileSync(fp, content, 'utf8');
+    return `已写入 ${fp}`;
+  } catch (e) { return `写入失败 ${fp}：${e.message}`; }
+}
+function list_dir({ path: p }) {
+  const fp = resolvePath(p);
+  try {
+    const items = fs.readdirSync(fp, { withFileTypes: true });
+    if (!items.length) return `${fp} 是空目录`;
+    return items.map((it) => (it.isDirectory() ? '[目录] ' : '') + it.name).join('\n');
+  } catch (e) { return `列不出目录 ${fp}：${e.message}`; }
+}
+function get_clipboard() {
+  try { return clipboard.readText() || '（剪贴板为空）'; }
+  catch (e) { return `读不到剪贴板：${e.message}`; }
+}
+function set_clipboard({ text }) {
+  try { clipboard.writeText(String(text)); return '已复制到剪贴板'; }
+  catch (e) { return `写入剪贴板失败：${e.message}`; }
+}
+
 // —— 分发 ——
-const handlers = { get_time, set_reminder, add_todo, list_todo, complete_todo, open_url, open_app, get_weather, remember, set_preference, correct };
+const handlers = { get_time, set_reminder, add_todo, list_todo, complete_todo, open_url, open_app, get_weather, remember, set_preference, correct, list_reminders, cancel_reminder, read_file, write_file, list_dir, get_clipboard, set_clipboard };
 async function execute(name, args) {
   const fn = handlers[name];
   if (!fn) return `没有「${name}」这个工具`;

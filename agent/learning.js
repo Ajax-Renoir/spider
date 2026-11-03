@@ -12,9 +12,9 @@ function load() {
 function save(d) { fs.writeFileSync(LEARNING_FILE, JSON.stringify(d, null, 2)); }
 
 // 记录一次任务经验：用了哪些工具、成败、备注（是否遇到问题）
-function record({ task, tools, success, note }) {
+function record({ task, tools, success, note, hadError }) {
   const d = load();
-  d.experiences.push({ task, tools: tools || [], success, note: note || '', createdAt: Date.now() });
+  d.experiences.push({ task, tools: tools || [], success, hadError: !!hadError, note: note || '', createdAt: Date.now() });
   if (d.experiences.length > 200) d.experiences = d.experiences.slice(-200);
   save(d);
 }

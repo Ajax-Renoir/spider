@@ -15,6 +15,7 @@ function save(m) { fs.writeFileSync(MEMORY_FILE, JSON.stringify(m, null, 2)); }
 function remember(text, tags) {
   const m = load();
   m.facts.push({ text, tags: tags || [], createdAt: Date.now() });
+  if (m.facts.length > 200) m.facts = m.facts.slice(-200); // 防无限膨胀
   save(m);
   return `已记住：${text}`;
 }
@@ -24,6 +25,7 @@ function addPreference(text) {
   const m = load();
   m.preferences = m.preferences || [];
   m.preferences.push({ text, createdAt: Date.now() });
+  if (m.preferences.length > 50) m.preferences = m.preferences.slice(-50);
   save(m);
   return `已记住偏好：${text}`;
 }
@@ -31,11 +33,17 @@ function addPreference(text) {
 // 纠错：主人纠正你记错的信息时，更新记忆为正确内容
 function correct(oldText, newText) {
   const m = load();
-  const idx = m.facts.findIndex((f) => f.text.includes(oldText));
-  if (idx >= 0) m.facts[idx] = { text: newText, tags: m.facts[idx].tags || [], createdAt: Date.now() };
-  else m.facts.push({ text: newText, tags: [], createdAt: Date.now() });
+  if (oldText) {
+    const idx = m.facts.findIndex((f) => f.text.includes(oldText));
+    if (idx >= 0) {
+      m.facts[idx] = { text: newText, tags: m.facts[idx].tags || [], createdAt: Date.now() };
+      save(m);
+      return `已更正：${newText}`;
+    }
+  }
+  m.facts.push({ text: newText, tags: [], createdAt: Date.now() });
   save(m);
-  return `已更正：${newText}`;
+  return `已记住：${newText}`;
 }
 
 function bigrams(s) {
@@ -73,7 +81,8 @@ function toPrompt(query) {
   const m = load();
   const facts = recall(query, 3);
   const parts = [];
-  if ((m.preferences || []).length) parts.push('【主人对你的长期要求/偏好】' + m.preferences.map((p) => p.text).join('；'));
+  const prefs = (m.preferences || []).slice(-20).reverse().map((p) => p.text);
+  if (prefs.length) parts.push('【主人对你的长期要求/偏好】' + prefs.join('；'));
   if (facts.length) parts.push('【你记住的关于主人的事】' + facts.join('；'));
   return parts.join('\n');
 }

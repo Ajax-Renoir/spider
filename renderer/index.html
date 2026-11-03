@@ -27,7 +27,7 @@
       padding: 12px 16px;
       font-family: "Microsoft YaHei", "Comic Sans MS", sans-serif;
       font-size: 15px; font-weight: 700;
-      color: #1a1a1a; line-height: 1.5;
+      color: #1a1a1a; line-height: 1.5; word-break: break-word;
       box-shadow: 4px 4px 0 rgba(0,0,0,0.18);
       margin-bottom: 4px;
       background-image: radial-gradient(rgba(0,0,0,0.035) 1px, transparent 1px);
@@ -100,8 +100,14 @@
         bubble.classList.remove('show');
         void bubble.offsetWidth; // 重触发动画
         bubble.classList.add('show');
+        // 气泡随内容增高：让窗口向上生长，避免溢出
+        var needH = bubble.offsetHeight + catStage.offsetHeight + 20;
+        window.spider && window.spider.resizePet(Math.max(220, Math.min(needH, 520)));
         clearTimeout(speakTimer);
-        speakTimer = setTimeout(function () { bubble.classList.remove('show'); }, 6000);
+        speakTimer = setTimeout(function () {
+          bubble.classList.remove('show');
+          window.spider && window.spider.resizePet(220); // 恢复默认高度
+        }, 6000);
       }
       window.spider && window.spider.onSpeak(speak);
 

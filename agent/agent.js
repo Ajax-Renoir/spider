@@ -1,4 +1,4 @@
-const { chat } = require('./llm');
+const { chatStream } = require('./llm');
 const tools = require('./tools');
 const vitals = require('./vitals');
 const memory = require('./memory');
@@ -11,8 +11,9 @@ const BASE_PROMPT = `你是 Spider，一只住在主人电脑桌面上的橘猫�
 
 【性格】软萌又机灵。帮主人干活时：高效、简洁、可靠；闲聊时：撒娇、卖萌、有猫味。日常回复 1-3 句。
 
-【能力】你能调用工具帮主人干活：查时间、设提醒、管理待办、打开网址或应用、查天气。
+【能力】你能调用工具帮主人干活：查时间、设提醒、管理待办、打开网址或应用、查天气、读写文件、读写剪贴板。
 面对需要多步骤的任务，先用一句话简述你的计划，再逐步调用工具完成。
+凡是能用工具完成的事（查时间、设提醒、查天气、记东西、写文件、复制文本），必须真的调用工具，不要凭空编造结果或口头应付。
 
 【记忆】当主人告诉你关于他自己的信息（日程安排、喜好、个人信息、重要事实）时，你必须主动调用 remember 工具记下来，不能只是口头回应。例如主人说"我明天要去游泳"，就要记下"主人明天要去游泳"。这样以后主人问起，你才能想起来。
 
@@ -36,7 +37,7 @@ async function buildSystemPrompt(userMessage) {
   return [BASE_PROMPT, vitals.toPrompt(v), mem, exp, hab, per, ref, HONESTY_RULE].filter(Boolean).join('\n\n');
 }
 
-async function runAgent(userMessage, history) {
+async function runAgent(userMessage, history, onStream) {
   const messages = [
     { role: 'system', content: await buildSystemPrompt(userMessage) },
     ...(history || []),
@@ -45,9 +46,10 @@ async function runAgent(userMessage, history) {
 
   const usedTools = [];
   let lastError = null;
+  let hadError = false;
 
   for (let step = 0; step < MAX_STEPS; step++) {
-    const res = await chat(messages, tools.definitions);
+    const res = await chatStream(messages, tools.definitions, onStream);
     // 心智消耗：按 token 吞吐扣精力
     if (res.usage && res.usage.total_tokens) vitals.drainTokens(res.usage.total_tokens);
     const msg = res.choices[0].message;
@@ -60,20 +62,20 @@ async function runAgent(userMessage, history) {
         usedTools.push(tc.function.name);
         let result;
         try { result = await tools.execute(tc.function.name, args); }
-        catch (e) { result = '工具执行出错：' + e.message; lastError = e.message; }
+        catch (e) { result = '工具执行出错：' + e.message; lastError = e.message; hadError = true; }
         messages.push({ role: 'tool', tool_call_id: tc.id, content: String(result) });
       }
       continue; // 基于工具结果继续决策（自查自纠：看到错误可换方法重试）
     }
 
-    if (usedTools.length || lastError) {
-      learning.record({ task: userMessage, tools: usedTools, success: true, note: lastError ? '曾遇问题后解决：' + lastError : '' });
+    if (usedTools.length || hadError) {
+      learning.record({ task: userMessage, tools: usedTools, success: true, hadError, note: hadError ? '中途遇挫已解决：' + lastError : '' });
     }
     return msg.content || '（Spider 眨了眨眼，没说话）';
   }
 
-  if (usedTools.length || lastError) {
-    learning.record({ task: userMessage, tools: usedTools, success: false, note: lastError || '步骤过多未完成' });
+  if (usedTools.length || hadError) {
+    learning.record({ task: userMessage, tools: usedTools, success: false, hadError, note: hadError ? lastError : '步骤过多未完成' });
   }
   return '（这个任务有点复杂，Spider 先做到这里啦，喵～）';
 }

@@ -12,7 +12,14 @@ const CFG = {
   energyDecayPerHour: 6,          // 精力：清醒每小时衰减
   energyRecoverPerHour: 15,       // 精力：睡觉每小时恢复
   moodDriftPerHour: 5,            // 心情：向 50 漂移的速度
-  energyPerToken: 1 / 500,        // 心智消耗：每 token 消耗精力
+  energyBaseCost: 0.4,            // 心智消耗：每次思考的固定起念成本
+  energyTokenBase: 600,           // 心智消耗：基准 token 数（600 token ≈ 1 单位）
+  energyTokenExp: 1.3,            // 心智消耗：超线性指数（>1 长任务更累）
+  energyFatigueMax: 0.6,          // 疲劳最大加成（精力 50→0 平滑升到 +60%）
+  energyHungerMax: 0.3,           // 饥饿最大加成（饱食 30→0 平滑升到 +30%）
+  energyGrumpyMax: 0.3,           // 烦躁最大加成（心情 30→0 平滑升到 +30%）
+  energyHappyBoost: 0.15,         // 愉悦最大省力（心情 70→100 平滑到 -15%）
+  energySleepMod: 1.5,            // 睡觉中被叫醒的加成（二值状态，保留）
 };
 
 const DEFAULT = { energy: 85, satiety: 75, mood: 72, sleeping: false, lastUpdated: Date.now() };
@@ -64,7 +71,35 @@ function play() { const v = tick(); v.mood = clamp(v.mood + 20, 0, 100); v.energ
 function wake() { const v = tick(); v.sleeping = false; v.mood = clamp(v.mood - 15, 0, 100); save(v); return v; }
 
 // 心智消耗：按 token 吞吐扣精力
-function drainTokens(tokens) { const v = tick(); v.energy = clamp(v.energy - tokens * CFG.energyPerToken, 0, 100); save(v); return v; }
+// 平滑过渡：x∈[0,1] 内从 0 平滑升到 1（smoothstep，两端导数连续，无跳变）
+function smooth01(x) {
+  x = clamp(x, 0, 1);
+  return x * x * (3 - 2 * x);
+}
+
+function drainTokens(tokens) {
+  const v = tick();
+  const t = tokens || 0;
+
+  // 连续状态调制：随身体状态平滑变化，没有 30/20/80 这类硬阈值
+  const tired = smooth01((50 - v.energy) / 50);    // 精力 50→0 疲劳 0→1
+  const hungry = smooth01((30 - v.satiety) / 30);  // 饱食 30→0 饥饿 0→1
+  const grumpy = smooth01((30 - v.mood) / 30);     // 心情 30→0 烦躁 0→1
+  const happy = smooth01((v.mood - 70) / 30);      // 心情 70→100 愉悦 0→1
+
+  let mod = (1 + CFG.energyFatigueMax * tired)
+          * (1 + CFG.energyHungerMax * hungry)
+          * (1 + CFG.energyGrumpyMax * grumpy)
+          * (1 - CFG.energyHappyBoost * happy);
+  if (v.sleeping) mod *= CFG.energySleepMod; // 睡觉是二值状态，保留
+
+  // 消耗 = 固定起念成本 + 随 token 超线性累进（长任务边际成本递增）
+  const cost = (t > 0 ? CFG.energyBaseCost : 0) + Math.pow(t / CFG.energyTokenBase, CFG.energyTokenExp);
+
+  v.energy = clamp(v.energy - cost * mod, 0, 100);
+  save(v);
+  return v;
+}
 
 // —— 情绪 ——
 const EMOTIONS = { sleepy: '困', hungry: '饿', grumpy: '不开心', happy: '开心', tired: '累', neutral: '平静' };
