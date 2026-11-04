@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('spider', {
   pet: () => ipcRenderer.invoke('vitals-pet'),
   play: () => ipcRenderer.invoke('vitals-play'),
   wake: () => ipcRenderer.invoke('vitals-wake'),
+  setVitals: (partial) => ipcRenderer.invoke('vitals-set', partial),
   // 行为动画信号
   onAnim: (cb) => ipcRenderer.on('pet-anim', (e, type) => cb(type)),
   onGaze: (cb) => ipcRenderer.on('pet-gaze', (e, direction) => cb(direction)),

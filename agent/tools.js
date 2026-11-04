@@ -155,7 +155,7 @@ const definitions = [
     type: 'function',
     function: {
       name: 'read_file',
-      description: '读取一个文本文件的内容（写绝对路径，或 桌面/xxx.txt、下载/xxx.txt 这类位置）',
+      description: '读取文件内容（自动按扩展名识别）：纯文本 .txt/.md/.csv/.json 直接读；Word .docx、Excel .xlsx、PDF .pdf 也能读',
       parameters: { type: 'object', properties: { path: { type: 'string', description: '文件路径，如 桌面/周记.txt 或 D:/xxx.txt' } }, required: ['path'] },
     },
   },
@@ -163,10 +163,10 @@ const definitions = [
     type: 'function',
     function: {
       name: 'write_file',
-      description: '把内容写成一个文本文件（写笔记、周记、报告等）',
+      description: '把内容写成文件（自动按扩展名识别）：.txt/.md/.csv/.json 写纯文本；.docx 用 Markdown（# 标题、- 列表）；.xlsx 用 CSV（逗号分隔）；.pptx 用 Markdown（# 每页标题、- 要点）',
       parameters: { type: 'object', properties: {
-        path: { type: 'string', description: '保存路径，如 桌面/周记.txt' },
-        content: { type: 'string', description: '要写入的完整内容' },
+        path: { type: 'string', description: '保存路径，如 桌面/报告.docx、桌面/表格.xlsx、桌面/演示.pptx' },
+        content: { type: 'string', description: '内容。Word/PPT 用 Markdown 格式，Excel 用逗号分隔的 CSV' },
       }, required: ['path', 'content'] },
     },
   },
@@ -383,8 +383,138 @@ function resolvePath(p) {
   }
   return path.isAbsolute(p) ? p : path.join(WORKSPACE_DIR, p);
 }
+// —— 办公文件：Word / Excel / PPT / PDF（惰性 require，缺库时给出友好提示）——
+function requireLib(name) {
+  try { return require(name); } catch { return null; }
+}
+
+async function readDocx(fp) {
+  const mammoth = requireLib('mammoth');
+  if (!mammoth) return '读取 Word 需要 mammoth 库，请先 npm install mammoth';
+  try {
+    const r = await mammoth.extractRawText({ path: fp });
+    const text = (r.value || '').trim();
+    return text.length > 8000 ? text.slice(0, 8000) + '\n…（内容过长已截断）' : (text || '（文档没有文本内容）');
+  } catch (e) { return `读不到 Word 文档 ${fp}：${e.message}`; }
+}
+
+async function readXlsx(fp) {
+  const ExcelJS = requireLib('exceljs');
+  if (!ExcelJS) return '读取 Excel 需要 exceljs 库，请先 npm install exceljs';
+  try {
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(fp);
+    const parts = [];
+    wb.worksheets.forEach((ws) => {
+      parts.push(`【工作表：${ws.name}】`);
+      const rows = [];
+      ws.eachRow({ includeEmpty: false }, (row) => {
+        const cells = [];
+        row.eachCell({ includeEmpty: false }, (cell) => {
+          let v = cell.text || '';
+          if (cell.value && typeof cell.value === 'object' && Array.isArray(cell.value.richText)) v = cell.value.richText.map((t) => t.text).join('');
+          cells.push(v);
+        });
+        if (cells.length) rows.push(cells.join('\t'));
+      });
+      parts.push(rows.join('\n'));
+    });
+    const text = parts.join('\n\n');
+    return text.length > 8000 ? text.slice(0, 8000) + '\n…（内容过长已截断）' : (text || '（表格为空）');
+  } catch (e) { return `读不到 Excel 文件 ${fp}：${e.message}`; }
+}
+
+async function readPdf(fp) {
+  const pdf = requireLib('pdf-parse');
+  if (!pdf || !pdf.PDFParse) return '读取 PDF 需要 pdf-parse 库，请先 npm install pdf-parse';
+  try {
+    const parser = new pdf.PDFParse({ data: fs.readFileSync(fp) });
+    const result = await parser.getText();
+    const text = (result && result.text ? result.text : '').trim();
+    return text.length > 8000 ? text.slice(0, 8000) + '\n…（内容过长已截断）' : (text || '（PDF 无文本，可能是扫描件）');
+  } catch (e) { return `读不到 PDF ${fp}：${e.message}`; }
+}
+
+async function writeDocx(fp, content) {
+  const docx = requireLib('docx');
+  if (!docx) return '生成 Word 需要 docx 库，请先 npm install docx';
+  const { Document, Packer, Paragraph, TextRun, HeadingLevel } = docx;
+  const children = [];
+  for (let line of String(content || '').split('\n')) {
+    line = line.replace(/\r/g, '');
+    if (/^#{1,3}\s+/.test(line)) {
+      const level = (line.match(/^#+/) || [''])[0].length;
+      const text = line.replace(/^#+\s+/, '');
+      const hl = level === 1 ? HeadingLevel.HEADING_1 : level === 2 ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_3;
+      children.push(new Paragraph({ heading: hl, children: [new TextRun(text)] }));
+    } else if (line.trim() === '') {
+      children.push(new Paragraph({ children: [] }));
+    } else if (/^[-*•]\s+/.test(line)) {
+      children.push(new Paragraph({ bullet: { level: 0 }, children: [new TextRun(line.replace(/^[-*•]\s+/, ''))] }));
+    } else {
+      children.push(new Paragraph({ children: [new TextRun(line)] }));
+    }
+  }
+  const doc = new Document({ sections: [{ children }] });
+  const buf = await Packer.toBuffer(doc);
+  fs.writeFileSync(fp, buf);
+  return `已生成 Word 文档 ${fp}`;
+}
+
+async function writeXlsx(fp, content) {
+  const ExcelJS = requireLib('exceljs');
+  if (!ExcelJS) return '生成 Excel 需要 exceljs 库，请先 npm install exceljs';
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Sheet1');
+  const lines = String(content || '').split('\n').filter((l) => l.trim() !== '');
+  for (const line of lines) ws.addRow(line.split(',').map((c) => c.trim()));
+  await wb.xlsx.writeFile(fp);
+  return `已生成 Excel 表格 ${fp}（${lines.length} 行）`;
+}
+
+function parseSlides(content) {
+  const slides = [];
+  let cur = null;
+  for (let line of String(content || '').split('\n')) {
+    line = line.replace(/\r/g, '');
+    if (/^#{1,3}\s+/.test(line)) {
+      cur = { title: line.replace(/^#+\s+/, ''), points: [] };
+      slides.push(cur);
+    } else if (/^[-*•]\s+/.test(line)) {
+      const pt = line.replace(/^[-*•]\s+/, '');
+      if (cur) cur.points.push(pt);
+      else { cur = { title: '', points: [pt] }; slides.push(cur); }
+    } else if (line.trim() && cur) {
+      cur.points.push(line.trim());
+    }
+  }
+  if (!slides.length) slides.push({ title: '未命名', points: [] });
+  return slides;
+}
+
+async function writePptx(fp, content) {
+  const pptxgen = requireLib('pptxgenjs');
+  if (!pptxgen) return '生成 PPT 需要 pptxgenjs 库，请先 npm install pptxgenjs';
+  const pptx = new pptxgen();
+  pptx.layout = 'LAYOUT_WIDE';
+  pptx.author = 'Spider';
+  const slides = parseSlides(content);
+  for (const s of slides) {
+    const slide = pptx.addSlide();
+    slide.background = { color: 'FFFFFF' };
+    if (s.title) slide.addText(s.title, { x: 0.6, y: 0.5, w: 12.1, h: 0.9, fontSize: 32, bold: true, color: '2C2C3E', fontFace: 'Microsoft YaHei' });
+    if (s.points.length) slide.addText(s.points.map((p) => '• ' + p).join('\n'), { x: 0.9, y: 1.8, w: 11.5, h: 4.8, fontSize: 18, color: '333333', fontFace: 'Microsoft YaHei', valign: 'top' });
+  }
+  await pptx.writeFile({ fileName: fp });
+  return `已生成 PPT ${fp}（${slides.length} 页）`;
+}
+
 function read_file({ path: p }) {
   const fp = resolvePath(p);
+  const ext = path.extname(fp).toLowerCase();
+  if (ext === '.docx') return readDocx(fp);
+  if (ext === '.xlsx') return readXlsx(fp);
+  if (ext === '.pdf') return readPdf(fp);
   try {
     const s = fs.readFileSync(fp, 'utf8');
     return s.length > 8000 ? s.slice(0, 8000) + '\n…（内容过长已截断）' : s;
@@ -392,8 +522,12 @@ function read_file({ path: p }) {
 }
 function write_file({ path: p, content }) {
   const fp = resolvePath(p);
+  const ext = path.extname(fp).toLowerCase();
   try {
     fs.mkdirSync(path.dirname(fp), { recursive: true });
+    if (ext === '.docx') return writeDocx(fp, content);
+    if (ext === '.xlsx') return writeXlsx(fp, content);
+    if (ext === '.pptx') return writePptx(fp, content);
     fs.writeFileSync(fp, content, 'utf8');
     return `已写入 ${fp}`;
   } catch (e) { return `写入失败 ${fp}：${e.message}`; }
@@ -472,8 +606,9 @@ function spawn({ command }) {
   if (keys.length > 32) for (const k of keys) if (managed[k].exited) delete managed[k];
 
   const id = 'p' + (++managedSeq);
-  const rec = { id, command: cmd, stdout: '', stderr: '', startedAt: Date.now(), exited: false, exitCode: null };
+  const rec = { id, command: cmd, stdout: '', stderr: '', startedAt: Date.now(), exited: false, exitCode: null, proc: null };
   const proc = spawnProc(cmd, { shell: true });
+  rec.proc = proc;
   proc.stdout && proc.stdout.on('data', (d) => { rec.stdout = (rec.stdout + d).slice(-100000); });
   proc.stderr && proc.stderr.on('data', (d) => { rec.stderr = (rec.stderr + d).slice(-100000); });
   proc.on('exit', (code) => { rec.exited = true; rec.exitCode = code; });

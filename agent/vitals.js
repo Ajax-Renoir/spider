@@ -9,7 +9,7 @@ const VITALS_FILE = path.join(dataDir, 'vitals.json');
 const CFG = {
   satietyDecayPerHour: 10,        // 饱食：清醒每小时衰减
   satietyDecaySleepPerHour: 4,    // 饱食：睡觉每小时衰减
-  energyDecayPerHour: 6,          // 精力：清醒每小时衰减
+  energyDecayPerHour: 0,          // 精力：清醒时不再随时间衰减（无任务不耗精力，只干活累）
   energyRecoverPerHour: 15,       // 精力：睡觉每小时恢复
   moodDriftPerHour: 5,            // 心情：向 50 漂移的速度
   energyBaseCost: 0.4,            // 心智消耗：每次思考的固定起念成本
@@ -20,6 +20,7 @@ const CFG = {
   energyGrumpyMax: 0.3,           // 烦躁最大加成（心情 30→0 平滑升到 +30%）
   energyHappyBoost: 0.15,         // 愉悦最大省力（心情 70→100 平滑到 -15%）
   energySleepMod: 1.5,            // 睡觉中被叫醒的加成（二值状态，保留）
+  energyCostScale: 0.25,          // 整体精力消耗缩放（已两次减半，≈÷4）
 };
 
 const DEFAULT = { energy: 85, satiety: 75, mood: 72, sleeping: false, lastUpdated: Date.now() };
@@ -71,6 +72,16 @@ function pet() { const v = tick(); v.mood = clamp(v.mood + 15, 0, 100); v.energy
 function play() { const v = tick(); v.mood = clamp(v.mood + 20, 0, 100); v.energy = clamp(v.energy - 10, 0, 100); v.satiety = clamp(v.satiety - 3, 0, 100); save(v); return v; }
 function wake() { const v = tick(); v.sleeping = false; v.sleepReason = null; v.mood = clamp(v.mood - 15, 0, 100); save(v); return v; }
 function rest() { const v = tick(); v.sleeping = true; v.sleepReason = 'rest'; save(v); return v; }
+// 测试版：直接覆盖状态值（精力/饱食/心情/睡眠）
+function set(partial) {
+  const v = tick();
+  if (typeof partial.energy === 'number') v.energy = clamp(partial.energy, 0, 100);
+  if (typeof partial.satiety === 'number') v.satiety = clamp(partial.satiety, 0, 100);
+  if (typeof partial.mood === 'number') v.mood = clamp(partial.mood, 0, 100);
+  if (typeof partial.sleeping === 'boolean') { v.sleeping = partial.sleeping; v.sleepReason = partial.sleeping ? 'rest' : null; }
+  save(v);
+  return v;
+}
 
 // 心智消耗：按 token 吞吐扣精力
 // 平滑过渡：x∈[0,1] 内从 0 平滑升到 1（smoothstep，两端导数连续，无跳变）
@@ -98,7 +109,7 @@ function drainTokens(tokens) {
   // 消耗 = 固定起念成本 + 随 token 超线性累进（长任务边际成本递增）
   const cost = (t > 0 ? CFG.energyBaseCost : 0) + Math.pow(t / CFG.energyTokenBase, CFG.energyTokenExp);
 
-  v.energy = clamp(v.energy - cost * mod, 0, 100);
+  v.energy = clamp(v.energy - cost * mod * CFG.energyCostScale, 0, 100);
   save(v);
   return v;
 }
@@ -129,4 +140,4 @@ function toPrompt(v) {
   return lines.join('\n');
 }
 
-module.exports = { tick, feed, pet, play, rest, wake, drainTokens, getEmotion, toPrompt, EMOTIONS, CFG };
+module.exports = { tick, feed, pet, play, rest, wake, set, drainTokens, getEmotion, toPrompt, EMOTIONS, CFG };

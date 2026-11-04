@@ -88,7 +88,7 @@ async function chatStream(messages, tools, onDelta) {
   }));
 
   return {
-    choices: [{ message: { content, tool_calls: tool_calls.length ? tool_calls : undefined } }],
+    choices: [{ message: { role: 'assistant', content, tool_calls: tool_calls.length ? tool_calls : undefined } }],
     usage,
   };
 }

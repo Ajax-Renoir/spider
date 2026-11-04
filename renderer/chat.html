@@ -28,6 +28,14 @@
       padding: 4px 10px; font-size: 12px; cursor: pointer;
     }
     #vitals-btns button:hover { background: #f0e0d0; }
+    #test-bar {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      padding: 6px 14px; background: #eef7ee; border-bottom: 1px dashed #b8d4b8; font-size: 12px;
+    }
+    #test-bar label { display: flex; align-items: center; gap: 3px; }
+    #test-bar input[type="range"] { width: 70px; }
+    #test-bar button { border: 1px solid #b8d4b8; background: #fff; border-radius: 12px; padding: 3px 9px; font-size: 12px; cursor: pointer; }
+    #test-bar button:hover { background: #dfeede; }
     #debug-bar {
       display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
       padding: 6px 14px; background: #fff7ec; border-bottom: 1px dashed #e0c9a6; font-size: 12px;
@@ -61,6 +69,13 @@
       <button data-act="wake" title="叫醒">😴 叫醒</button>
     </span>
   </div>
+  <div id="test-bar">
+    <span style="color:#6a9b6a">🧪 测试调状态：</span>
+    <label>精力<input type="range" id="t-energy" min="0" max="100" /></label>
+    <label>饱食<input type="range" id="t-satiety" min="0" max="100" /></label>
+    <label>心情<input type="range" id="t-mood" min="0" max="100" /></label>
+    <button id="t-sleep">💤 睡眠</button>
+  </div>
   <div id="debug-bar">
     <span style="color:#b08a4a">演示主动触发：</span>
     <button data-demo="hungry">🍖 饥饿讨食</button>
@@ -93,6 +108,9 @@
 
     function renderVitals(v) {
       vitalsText.textContent = '精力 ' + v.energy + ' | 饱食 ' + v.satiety + ' | 心情 ' + v.mood + '（' + v.emotionLabel + '）' + (v.sleeping ? ' · 睡觉中' : '');
+      var e = document.getElementById('t-energy'); if (e) e.value = v.energy;
+      var s = document.getElementById('t-satiety'); if (s) s.value = v.satiety;
+      var m = document.getElementById('t-mood'); if (m) m.value = v.mood;
     }
 
     async function refreshVitals() {
@@ -154,6 +172,13 @@
     document.getElementById('diary-btn').addEventListener('click', function () { window.spider.openDiary(); });
     document.querySelectorAll('#vitals-btns button').forEach(function (btn) {
       btn.addEventListener('click', function () { doAction(btn.dataset.act); });
+    });
+    document.getElementById('t-energy').addEventListener('change', function (e) { window.spider.setVitals({ energy: Number(e.target.value) }).then(renderVitals); });
+    document.getElementById('t-satiety').addEventListener('change', function (e) { window.spider.setVitals({ satiety: Number(e.target.value) }).then(renderVitals); });
+    document.getElementById('t-mood').addEventListener('change', function (e) { window.spider.setVitals({ mood: Number(e.target.value) }).then(renderVitals); });
+    document.getElementById('t-sleep').addEventListener('click', async function () {
+      var v = await window.spider.getVitals();
+      renderVitals(await window.spider.setVitals({ sleeping: !v.sleeping }));
     });
     document.querySelectorAll('#debug-bar button').forEach(function (btn) {
       btn.addEventListener('click', async function () {

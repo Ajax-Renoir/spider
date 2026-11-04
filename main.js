@@ -439,6 +439,10 @@ ipcMain.handle('vitals-wake', () => {
   playOneShot('stretch');
   return view;
 });
+ipcMain.handle('vitals-set', (e, partial) => {
+  noteInteraction();
+  return updateVitals(vitals.set(partial || {}));
+});
 
 // —— 调试：演示主动触发 ——
 ipcMain.handle('debug-fire', async (e, type) => {
@@ -447,6 +451,13 @@ ipcMain.handle('debug-fire', async (e, type) => {
   const msg = await autonomy.debugFire(type);
   if (msg) petSpeak(msg);
   return msg;
+});
+
+// 单实例锁：防止重复启动出现多只猫
+if (!app.requestSingleInstanceLock()) app.quit();
+app.on('second-instance', () => {
+  if (petWindow && !petWindow.isDestroyed()) petWindow.show();
+  if (chatWindow && !chatWindow.isDestroyed()) chatWindow.focus();
 });
 
 app.whenReady().then(() => {

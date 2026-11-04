@@ -11,6 +11,11 @@
     "electron": "^45.2.1"
   },
   "dependencies": {
-    "jimp": "^0.22.12"
+    "docx": "^9.15.2",
+    "exceljs": "^4.4.0",
+    "jimp": "^0.22.12",
+    "mammoth": "^1.13.0",
+    "pdf-parse": "^2.4.5",
+    "pptxgenjs": "^4.0.1"
   }
 }
