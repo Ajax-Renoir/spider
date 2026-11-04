@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('spider', {
   dragStart: () => ipcRenderer.send('drag-start'),
   dragMove: () => ipcRenderer.send('drag-move'),
   dragEnd: () => ipcRenderer.send('drag-end'),
+  hoverCat: (hovered) => ipcRenderer.send('pet-hit-test', hovered),
   openChat: () => ipcRenderer.send('open-chat'),
   chat: (msg, history, chatId) => ipcRenderer.invoke('agent-chat', { msg, history, chatId }),
   onChatDelta: (cb) => ipcRenderer.on('agent-chat-delta', (e, payload) => cb(payload)),
@@ -20,9 +21,9 @@ contextBridge.exposeInMainWorld('spider', {
   wake: () => ipcRenderer.invoke('vitals-wake'),
   // 行为动画信号
   onAnim: (cb) => ipcRenderer.on('pet-anim', (e, type) => cb(type)),
+  onGaze: (cb) => ipcRenderer.on('pet-gaze', (e, direction) => cb(direction)),
   // 说话气泡
   onSpeak: (cb) => ipcRenderer.on('pet-speak', (e, text) => cb(text)),
-  resizePet: (height) => ipcRenderer.send('pet-resize', { height }),
   // 调试：演示主动触发
   debugFire: (type) => ipcRenderer.invoke('debug-fire', type),
 });

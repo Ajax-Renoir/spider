@@ -56,9 +56,10 @@ function tick(v) {
   if (v.satiety < 30) v.mood = clamp(v.mood - 3 * hours, 0, 100);
   if (v.energy < 20) v.mood = clamp(v.mood - 3 * hours, 0, 100);
 
-  // 自动睡 / 醒
-  if (v.energy < 15) v.sleeping = true;
-  else if (v.energy >= 90) v.sleeping = false;
+  // 主动休息(rest)不会被高精力自动唤醒；低精力累倒(exhausted)仍自然醒
+  if (v.energy < 15) { v.sleeping = true; v.sleepReason = 'exhausted'; }
+  else if (v.energy >= 90 && v.sleepReason !== 'rest') { v.sleeping = false; v.sleepReason = null; }
+  if (!v.sleeping) v.sleepReason = null;
 
   save(v);
   return v;
@@ -68,7 +69,8 @@ function tick(v) {
 function feed() { const v = tick(); v.satiety = clamp(v.satiety + 30, 0, 100); v.mood = clamp(v.mood + 5, 0, 100); save(v); return v; }
 function pet() { const v = tick(); v.mood = clamp(v.mood + 15, 0, 100); v.energy = clamp(v.energy - 1, 0, 100); save(v); return v; }
 function play() { const v = tick(); v.mood = clamp(v.mood + 20, 0, 100); v.energy = clamp(v.energy - 10, 0, 100); v.satiety = clamp(v.satiety - 3, 0, 100); save(v); return v; }
-function wake() { const v = tick(); v.sleeping = false; v.mood = clamp(v.mood - 15, 0, 100); save(v); return v; }
+function wake() { const v = tick(); v.sleeping = false; v.sleepReason = null; v.mood = clamp(v.mood - 15, 0, 100); save(v); return v; }
+function rest() { const v = tick(); v.sleeping = true; v.sleepReason = 'rest'; save(v); return v; }
 
 // 心智消耗：按 token 吞吐扣精力
 // 平滑过渡：x∈[0,1] 内从 0 平滑升到 1（smoothstep，两端导数连续，无跳变）
@@ -127,4 +129,4 @@ function toPrompt(v) {
   return lines.join('\n');
 }
 
-module.exports = { tick, feed, pet, play, wake, drainTokens, getEmotion, toPrompt, EMOTIONS, CFG };
+module.exports = { tick, feed, pet, play, rest, wake, drainTokens, getEmotion, toPrompt, EMOTIONS, CFG };

@@ -8,9 +8,8 @@
     html, body {
       width: 100%; height: 100%;
       background: transparent; overflow: hidden; user-select: none;
-      cursor: grab;
+      cursor: default;
     }
-    body:active { cursor: grabbing; }
     .pet {
       width: 100%; height: 100%;
       display: flex; flex-direction: column;
@@ -27,7 +26,7 @@
       padding: 12px 16px;
       font-family: "Microsoft YaHei", "Comic Sans MS", sans-serif;
       font-size: 15px; font-weight: 700;
-      color: #1a1a1a; line-height: 1.5; word-break: break-word;
+      color: #1a1a1a; line-height: 1.5;
       box-shadow: 4px 4px 0 rgba(0,0,0,0.18);
       margin-bottom: 4px;
       background-image: radial-gradient(rgba(0,0,0,0.035) 1px, transparent 1px);
@@ -49,32 +48,17 @@
       100% { transform: scale(1); opacity: 1; }
     }
     /* —— 猫 —— */
-    #catStage { display: flex; align-items: flex-end; justify-content: center; }
+    #catStage {
+      width: 256px; height: 192px; flex: 0 0 192px;
+      display: flex; align-items: flex-end; justify-content: center;
+    }
+    #catMirror { width: 256px; height: 192px; transform-origin: center; }
+    #catMirror.flip { transform: scaleX(-1); }
     #cat {
-      width: 130px; height: auto;
+      width: 256px; height: 192px;
+      background-repeat: no-repeat;
+      image-rendering: pixelated;
       filter: drop-shadow(0 6px 10px rgba(0,0,0,0.35));
-    }
-    #cat.walking { animation: walk 0.45s ease-in-out infinite; }
-    #cat.hopping { animation: hop 0.5s ease; }
-    #cat.happy { animation: happy 0.9s ease; }
-    @keyframes walk {
-      0%, 100% { transform: translateY(0) rotate(0deg); }
-      25% { transform: translateY(-3px) rotate(-5deg); }
-      50% { transform: translateY(-1px) rotate(0deg); }
-      75% { transform: translateY(-3px) rotate(5deg); }
-    }
-    @keyframes hop {
-      0% { transform: translateY(0) scale(1, 1); }
-      35% { transform: translateY(-16px) scale(1.04, 0.96); }
-      65% { transform: translateY(0) scale(0.96, 1.05); }
-      100% { transform: translateY(0) scale(1, 1); }
-    }
-    @keyframes happy {
-      0%, 100% { transform: translateY(0) rotate(0deg); }
-      20% { transform: translateY(-10px) rotate(-6deg); }
-      40% { transform: translateY(0) rotate(6deg); }
-      60% { transform: translateY(-8px) rotate(-4deg); }
-      80% { transform: translateY(0) rotate(4deg); }
     }
   </style>
 </head>
@@ -82,15 +66,56 @@
   <div class="pet" id="petWrap">
     <div id="bubble"></div>
     <div id="catStage">
-      <img id="cat" src="../assets/spider-cat.png" alt="Spider" />
+      <div id="catMirror"><div id="cat" role="img" aria-label="Spider"></div></div>
     </div>
   </div>
 
+  <script src="../assets/cat/animations.js"></script>
   <script>
     (function () {
       var bubble = document.getElementById('bubble');
-      var catStage = document.getElementById('catStage');
+      var petWrap = document.getElementById('petWrap');
+      var catMirror = document.getElementById('catMirror');
       var cat = document.getElementById('cat');
+      var config = window.CAT_ANIMATIONS;
+      var CAT_SCALE = 1;
+      var currentType = 'idle';
+      var currentClip = 'idle';
+      var currentGaze = 'center';
+      var frameStarted = performance.now();
+      var shownFrame = -1;
+      var spriteImages = {};
+      var hitCanvas = document.createElement('canvas');
+      hitCanvas.width = hitCanvas.height = 1;
+      var hitContext = hitCanvas.getContext('2d', { willReadFrequently: true });
+
+      function spriteFor(name) {
+        var sheet = config.clips[name].sheet || name;
+        if (!spriteImages[sheet]) {
+          spriteImages[sheet] = new Image();
+          spriteImages[sheet].src = '../assets/cat/' + sheet + '.png';
+        }
+        return spriteImages[sheet];
+      }
+
+      // 只让猫咪当前帧的实际像素响应抓取，透明区域和窗口空白不响应。
+      function isOpaqueCatPixel(e) {
+        var image = spriteFor(currentClip);
+        if (!image.complete || !image.naturalWidth || shownFrame < 0) return false;
+        var rect = cat.getBoundingClientRect();
+        var x = Math.floor((e.clientX - rect.left) * config.frameWidth / rect.width);
+        var y = Math.floor((e.clientY - rect.top) * config.frameHeight / rect.height);
+        if (x < 0 || y < 0 || x >= config.frameWidth || y >= config.frameHeight) return false;
+        if (catMirror.classList.contains('flip')) x = config.frameWidth - 1 - x;
+        try {
+          hitContext.clearRect(0, 0, 1, 1);
+          hitContext.drawImage(image,
+            shownFrame * config.frameWidth + x, y, 1, 1, 0, 0, 1, 1);
+          return hitContext.getImageData(0, 0, 1, 1).data[3] >= 32;
+        } catch (error) {
+          return false;
+        }
+      }
 
       // ---- 说话气泡：显示 + 自动隐藏 ----
       var speakTimer = null;
@@ -100,55 +125,150 @@
         bubble.classList.remove('show');
         void bubble.offsetWidth; // 重触发动画
         bubble.classList.add('show');
-        // 气泡随内容增高：让窗口向上生长，避免溢出
-        var needH = bubble.offsetHeight + catStage.offsetHeight + 20;
-        window.spider && window.spider.resizePet(Math.max(220, Math.min(needH, 520)));
         clearTimeout(speakTimer);
-        speakTimer = setTimeout(function () {
-          bubble.classList.remove('show');
-          window.spider && window.spider.resizePet(220); // 恢复默认高度
-        }, 6000);
+        speakTimer = setTimeout(function () { bubble.classList.remove('show'); }, 6000);
       }
       window.spider && window.spider.onSpeak(speak);
 
-      // ---- 拖拽 + 点击识别 ----
-      var dragging = false, downX = 0, downY = 0, moved = false;
-      document.addEventListener('mousedown', function (e) {
-        if (e.button !== 0) return;
-        dragging = true; downX = e.clientX; downY = e.clientY; moved = false;
+      // ---- 精灵图播放：所有动作共享固定画布与脚底锚点 ----
+      function clipFor(type) {
+        var followsMouse = type === 'idle' || type === 'emotion-neutral';
+        if (followsMouse && currentGaze !== 'center') return 'idle-' + currentGaze;
+        return type;
+      }
+
+      function selectClip(name, preservePhase) {
+        if (!config.clips[name]) name = 'idle';
+        var now = performance.now();
+        var phase = 0;
+        if (preservePhase && config.clips[currentClip]) {
+          var previous = config.clips[currentClip];
+          phase = ((now - frameStarted) * previous.fps / 1000) % previous.frames;
+        }
+        currentClip = name;
+        var clip = config.clips[name];
+        frameStarted = now - phase * 1000 / clip.fps;
+        shownFrame = -1;
+        cat.style.backgroundImage = 'url("' + spriteFor(name).src + '")';
+        cat.style.backgroundSize = (clip.frames * config.frameWidth * CAT_SCALE) + 'px '
+          + (config.frameHeight * CAT_SCALE) + 'px';
+      }
+
+      function setAnimation(type) {
+        if (type === 'walk-left' || type === 'walk-right') {
+          catMirror.classList.toggle('flip', type === 'walk-right');
+          type = 'walk';
+        } else {
+          catMirror.classList.remove('flip');
+        }
+        if (!config.clips[type]) type = 'idle';
+        var changed = currentType !== type;
+        currentType = type;
+        var nextClip = clipFor(type);
+        if (nextClip !== currentClip) selectClip(nextClip, !changed && config.clips[currentClip].gaze);
+        else if (!changed && !config.clips[currentClip].loop) selectClip(nextClip, false);
+        else if (changed) selectClip(nextClip, false);
+      }
+
+      function drawFrame() {
+        var clip = config.clips[currentClip];
+        var position = (performance.now() - frameStarted) * clip.fps / 1000;
+        var frame = clip.loop
+          ? Math.floor(position) % clip.frames
+          : Math.min(clip.frames - 1, Math.max(0, Math.floor(position)));
+        if (frame !== shownFrame) {
+          shownFrame = frame;
+          cat.style.backgroundPosition = (-frame * config.frameWidth * CAT_SCALE) + 'px 0px';
+        }
+        requestAnimationFrame(drawFrame);
+      }
+
+      Object.keys(config.clips).filter(function (name) {
+        return name === 'idle' || name.indexOf('idle-') === 0;
+      }).concat([
+        'struggle', 'stretch', 'beg', 'attention', 'yawn', 'remind-meal',
+      ]).forEach(spriteFor);
+      selectClip('idle', false);
+      requestAnimationFrame(drawFrame);
+      window.spider && window.spider.onAnim(setAnimation);
+      window.spider && window.spider.onGaze(function (direction) {
+        var clip = direction === 'center' ? config.clips.idle : config.clips['idle-' + direction];
+        if (!clip || !clip.gaze) return;
+        var changed = currentGaze !== direction;
+        currentGaze = direction;
+        if (changed && (currentType === 'idle' || currentType === 'emotion-neutral')) {
+          var nextClip = clipFor(currentType);
+          if (nextClip !== currentClip) selectClip(nextClip, true);
+        }
+      });
+
+      // ---- 逐像素点击穿透 + 拖拽：透明区域把鼠标还给底层应用 ----
+      var dragging = false, pointerId = null, downX = 0, downY = 0, moved = false;
+      var lastCatHit = null;
+      function updateCatHit(hit) {
+        hit = Boolean(hit);
+        if (hit === lastCatHit) return;
+        lastCatHit = hit;
+        window.spider && window.spider.hoverCat(hit);
+      }
+      function finishDrag(cancelled, e) {
+        if (!dragging) return;
+        var finishedPointer = pointerId;
+        dragging = false;
+        pointerId = null;
+        if (finishedPointer !== null && petWrap.hasPointerCapture(finishedPointer)) {
+          petWrap.releasePointerCapture(finishedPointer);
+        }
+        window.spider && window.spider.dragEnd();
+        updateCatHit(e ? isOpaqueCatPixel(e) : false);
+        cat.style.cursor = 'default';
+        if (!moved && !cancelled) window.spider && window.spider.openChat();
+      }
+      document.addEventListener('pointerdown', function (e) {
+        if (e.button !== 0 || dragging) return;
+        if (e.target !== cat || !isOpaqueCatPixel(e)) {
+          updateCatHit(false);
+          return;
+        }
+        updateCatHit(true);
+        dragging = true;
+        pointerId = e.pointerId;
+        downX = e.screenX;
+        downY = e.screenY;
+        moved = false;
+        petWrap.setPointerCapture(e.pointerId);
+        cat.style.cursor = 'grabbing';
         window.spider && window.spider.dragStart();
         e.preventDefault();
       });
-      window.addEventListener('mousemove', function (e) {
-        if (!dragging) return;
-        if (Math.abs(e.clientX - downX) > 4 || Math.abs(e.clientY - downY) > 4) moved = true;
+      document.addEventListener('pointermove', function (e) {
+        if (!dragging) {
+          // 透明空白穿透且保持普通箭头，只有猫身实际像素可抓取。
+          var hit = e.target === cat && isOpaqueCatPixel(e);
+          updateCatHit(hit);
+          cat.style.cursor = hit ? 'grab' : 'default';
+          return;
+        }
+        if (e.pointerId !== pointerId) return;
+        if (Math.abs(e.screenX - downX) > 4 || Math.abs(e.screenY - downY) > 4) moved = true;
         window.spider && window.spider.dragMove();
       });
-      window.addEventListener('mouseup', function () {
-        if (!dragging) return;
-        dragging = false;
-        window.spider && window.spider.dragEnd();
-        if (!moved) window.spider && window.spider.openChat();
+      document.addEventListener('pointerup', function (e) {
+        if (dragging && e.pointerId === pointerId) finishDrag(false, e);
       });
-
-      // ---- 呼吸（作用在猫容器，与气泡无关）----
-      var t = Math.random() * 100;
-      function breathe() {
-        t += 0.006;
-        var sx = 1 + Math.sin(t) * 0.02 + Math.sin(t * 0.41) * 0.006;
-        var rot = Math.sin(t * 0.53) * 1.2;
-        catStage.style.transform = 'scale(' + sx.toFixed(4) + ') rotate(' + rot.toFixed(2) + 'deg)';
-        requestAnimationFrame(breathe);
-      }
-      requestAnimationFrame(breathe);
-
-      // ---- 行为动画 ----
-      window.spider && window.spider.onAnim(function (type) {
-        cat.classList.remove('walking', 'hopping', 'happy');
-        if (type === 'walk-left' || type === 'walk-right') cat.classList.add('walking');
-        else if (type === 'hop') cat.classList.add('hopping');
-        else if (type === 'happy') cat.classList.add('happy');
+      document.addEventListener('pointercancel', function (e) {
+        if (dragging && e.pointerId === pointerId) finishDrag(true, null);
       });
+      document.addEventListener('lostpointercapture', function (e) {
+        if (dragging && e.pointerId === pointerId) finishDrag(true, null);
+      }, true);
+      document.addEventListener('pointerleave', function () {
+        if (!dragging) {
+          updateCatHit(false);
+          cat.style.cursor = 'default';
+        }
+      });
+      window.addEventListener('blur', function () { finishDrag(true, null); });
     })();
   </script>
 </body>

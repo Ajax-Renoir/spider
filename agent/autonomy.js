@@ -178,7 +178,7 @@ function onMinute(idleSec) {
   if (!reason && active && activeSince && Date.now() - activeSince > 2 * 60 * 60000) reason = 'overwork';
 
   if (!reason) return Promise.resolve(null);
-  return tick(reason);
+  return tick(reason).then((text) => (text ? { reason, text } : null));
 }
 
 // —— 启动问候 / 调试触发（从 triggers.js 迁移）——
