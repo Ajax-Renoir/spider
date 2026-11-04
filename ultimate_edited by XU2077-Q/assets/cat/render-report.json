@@ -1,0 +1,106 @@
+[
+  {
+    "name": "struggle",
+    "frameCount": 8,
+    "fps": 10,
+    "loop": true,
+    "sheet": [
+      2048,
+      192
+    ],
+    "clippedFrames": [],
+    "minTop": 75,
+    "maxBottom": 161,
+    "emptyFrames": [],
+    "frames": [
+      {
+        "index": 0,
+        "time": 0,
+        "bounds": [
+          26,
+          75,
+          197,
+          161
+        ],
+        "opaque": 7385
+      },
+      {
+        "index": 1,
+        "time": 0.1,
+        "bounds": [
+          26,
+          77,
+          229,
+          157
+        ],
+        "opaque": 7290
+      },
+      {
+        "index": 2,
+        "time": 0.2,
+        "bounds": [
+          30,
+          79,
+          236,
+          158
+        ],
+        "opaque": 7409
+      },
+      {
+        "index": 3,
+        "time": 0.3,
+        "bounds": [
+          30,
+          78,
+          217,
+          154
+        ],
+        "opaque": 7043
+      },
+      {
+        "index": 4,
+        "time": 0.4,
+        "bounds": [
+          26,
+          75,
+          197,
+          161
+        ],
+        "opaque": 7385
+      },
+      {
+        "index": 5,
+        "time": 0.5,
+        "bounds": [
+          26,
+          77,
+          229,
+          157
+        ],
+        "opaque": 7290
+      },
+      {
+        "index": 6,
+        "time": 0.6,
+        "bounds": [
+          30,
+          79,
+          236,
+          158
+        ],
+        "opaque": 7409
+      },
+      {
+        "index": 7,
+        "time": 0.7,
+        "bounds": [
+          30,
+          78,
+          217,
+          154
+        ],
+        "opaque": 7043
+      }
+    ]
+  }
+]

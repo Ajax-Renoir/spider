@@ -1,0 +1,10 @@
+{
+  "deepseek": {
+    "baseUrl": "https://api.deepseek.com",
+    "model": "deepseek-chat",
+    "apiKey": "在此填入你的 DeepSeek API Key"
+  },
+  "weather": {
+    "provider": "open-meteo"
+  }
+}
