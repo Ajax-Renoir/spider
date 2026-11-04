@@ -181,4 +181,30 @@ function onMinute(idleSec) {
   return tick(reason);
 }
 
-module.exports = { onMinute, tick };
+// —— 启动问候 / 调试触发（从 triggers.js 迁移）——
+async function speak(situation) {
+  const prompt = `你是 Spider，一只橘猫。现在你要主动对主人说话（不是回应，是主动发起）。情境：${situation}。
+用 Spider 的口吻说 1~2 句，中文，软萌直接，可带"喵"。只输出要说的话。`;
+  const res = await chat([{ role: 'user', content: prompt }]);
+  return (res.choices[0].message.content || '').trim();
+}
+async function greet() {
+  const hour = new Date().getHours();
+  const s = hour < 11 ? '现在是早上，主人刚打开电脑，你道早安，并问要不要安排今天的事'
+    : hour < 18 ? '现在是白天，主人刚打开电脑，你打个招呼，问今天要不要帮忙'
+    : '现在是晚上，主人刚打开电脑，你打个招呼，提醒别太晚睡';
+  return await speak(s);
+}
+async function debugFire(type) {
+  const situations = {
+    hungry: '你饿得不行（饱食度很低），向主人撒娇讨食',
+    bored: '主人好久没理你，你有点无聊失落，想引起他注意',
+    latenight: '已经深夜，主人还在忙，你提醒他该睡觉了',
+    meal: '到了饭点，主人还在忙，你提醒他该吃饭了',
+    overwork: '主人已经连续工作很久了，你提醒他起来活动 5 分钟',
+  };
+  if (!situations[type]) return null;
+  return await speak(situations[type]);
+}
+
+module.exports = { onMinute, tick, greet, debugFire };

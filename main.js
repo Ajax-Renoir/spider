@@ -4,7 +4,6 @@ const agent = require('./agent/agent');
 const tools = require('./agent/tools');
 const vitals = require('./agent/vitals');
 const diary = require('./agent/diary');
-const triggers = require('./agent/triggers');
 const habits = require('./agent/habits');
 const perception = require('./agent/perception');
 const reflection = require('./agent/reflection');
@@ -196,7 +195,7 @@ ipcMain.handle('vitals-wake', () => vitalsView(vitals.wake()));
 
 // —— 调试：演示主动触发 ——
 ipcMain.handle('debug-fire', async (e, type) => {
-  const msg = await triggers.debugFire(type);
+  const msg = await autonomy.debugFire(type);
   if (msg) petSpeak(msg);
   return msg;
 });
@@ -209,7 +208,7 @@ app.whenReady().then(() => {
   reflection.ensureYesterdayReflection().then((r) => console.log('[reflection]', r));
 
   // 主动触发：启动问候 + 周期检查
-  triggers.greet().then(petSpeak).catch((e) => console.error('[greet]', e && e.message));
+  autonomy.greet().then(petSpeak).catch((e) => console.error('[greet]', e && e.message));
   setInterval(() => {
     try {
       const idleSec = powerMonitor.getSystemIdleTime();

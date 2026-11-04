@@ -1,5 +1,5 @@
 const { shell, Notification, clipboard } = require('electron');
-const { exec } = require('child_process');
+const { exec, execFile, spawn: spawnProc } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -173,14 +173,6 @@ const definitions = [
   {
     type: 'function',
     function: {
-      name: 'list_dir',
-      description: '列出一个目录下的文件（默认工作区，可给 桌面/下载/文档 等位置）',
-      parameters: { type: 'object', properties: { path: { type: 'string', description: '目录路径，可省略' } } },
-    },
-  },
-  {
-    type: 'function',
-    function: {
       name: 'get_clipboard',
       description: '读取剪贴板里的文本',
       parameters: { type: 'object', properties: {} },
@@ -192,6 +184,68 @@ const definitions = [
       name: 'set_clipboard',
       description: '把文本写入剪贴板，方便主人直接粘贴',
       parameters: { type: 'object', properties: { text: { type: 'string', description: '要复制的文本' } }, required: ['text'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_command',
+      description: '在系统命令行执行一条命令并返回输出（如 npm install、python 脚本、git 等）。危险命令会被拒绝',
+      parameters: { type: 'object', properties: { command: { type: 'string', description: '要执行的命令' } }, required: ['command'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'exec_argv',
+      description: '以结构化参数执行一个程序（不经过 shell，最安全，优先用）。适合 node/python 等真实程序；npm/git 这类 .cmd 用 run_command',
+      parameters: { type: 'object', properties: {
+        program: { type: 'string', description: '程序名，如 node、python' },
+        args: { type: 'array', items: { type: 'string' }, description: '参数数组' },
+        cwd: { type: 'string', description: '工作目录（可选）' },
+        timeout: { type: 'number', description: '超时秒数，默认 30' },
+      }, required: ['program'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'spawn',
+      description: '启动一个长时进程并立即返回进程 ID（如 npm install、启动服务），不阻塞',
+      parameters: { type: 'object', properties: { command: { type: 'string', description: '要启动的命令' } }, required: ['command'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'manage_process',
+      description: '管理已启动的长进程：list 列出 / poll 查输出 / kill 终止',
+      parameters: { type: 'object', properties: {
+        process_id: { type: 'string', description: '进程 ID，如 p1' },
+        action: { type: 'string', enum: ['list', 'poll', 'kill'], description: '操作，默认 poll' },
+      } },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'grep',
+      description: '在目录下的文件内容里搜索文本（类似命令行 grep），返回「文件:行号:内容」',
+      parameters: { type: 'object', properties: {
+        pattern: { type: 'string', description: '要搜索的文本（支持正则）' },
+        dir: { type: 'string', description: '搜索目录，如 桌面/项目 或 工作区，默认工作区' },
+      }, required: ['pattern'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'glob',
+      description: '按文件名模式查找文件（如 **/*.js、*.md）；省略 pattern 则列出目录内容（含子目录）',
+      parameters: { type: 'object', properties: {
+        pattern: { type: 'string', description: '匹配模式，* 匹配单层，** 匹配任意层级；不填则列目录' },
+        dir: { type: 'string', description: '起始目录，如 桌面/项目 或 工作区，默认工作区' },
+      } },
     },
   },
 ];
@@ -344,14 +398,6 @@ function write_file({ path: p, content }) {
     return `已写入 ${fp}`;
   } catch (e) { return `写入失败 ${fp}：${e.message}`; }
 }
-function list_dir({ path: p }) {
-  const fp = resolvePath(p);
-  try {
-    const items = fs.readdirSync(fp, { withFileTypes: true });
-    if (!items.length) return `${fp} 是空目录`;
-    return items.map((it) => (it.isDirectory() ? '[目录] ' : '') + it.name).join('\n');
-  } catch (e) { return `列不出目录 ${fp}：${e.message}`; }
-}
 function get_clipboard() {
   try { return clipboard.readText() || '（剪贴板为空）'; }
   catch (e) { return `读不到剪贴板：${e.message}`; }
@@ -361,8 +407,190 @@ function set_clipboard({ text }) {
   catch (e) { return `写入剪贴板失败：${e.message}`; }
 }
 
+// —— 命令执行（借鉴 PTMCP：argv-first + 输出守卫 + 进程管理）——
+const DANGEROUS_COMMANDS = [
+  'rm -rf', 'rm -fr', 'del /s', 'del /q', 'rd /s', 'rmdir /s',
+  'format ', 'diskpart', 'shutdown', 'reboot', 'mkfs', 'reg delete', 'sc delete',
+];
+const DANGEROUS_PROGRAMS = ['rm', 'del', 'erase', 'format', 'diskpart', 'shutdown', 'reboot', 'mkfs', 'rmdir', 'rd', 'reg', 'sc', 'taskkill'];
+function isDangerous(cmd) {
+  const low = String(cmd || '').toLowerCase();
+  return DANGEROUS_COMMANDS.find((d) => low.includes(d)) || null;
+}
+
+// 输出守卫：命令输出里的大段 base64/hex 二进制，只留摘要，别灌进 LLM
+function guardOutput(text) {
+  if (typeof text !== 'string' || !text) return text;
+  return text
+    .replace(/[A-Za-z0-9+/]{200,}={0,2}/g, (m) => `[已省略 ${m.length} 字符的 base64 数据]`)
+    .replace(/[0-9a-fA-F]{200,}/g, (m) => `[已省略 ${m.length} 字符的 hex 数据]`);
+}
+
+// shell 执行（需要 shell 语法时用，带黑名单 + 输出守卫）
+function run_command({ command }) {
+  const cmd = String(command || '').trim();
+  if (!cmd) return '命令为空';
+  if (isDangerous(cmd)) return `⚠️ 已拒绝执行：${cmd}\n这条命令可能造成不可逆后果，请主人自己判断要不要手动执行。`;
+  return new Promise((resolve) => {
+    exec(cmd, { timeout: 30000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err && err.killed) return resolve(`命令超时（30 秒）已终止：${cmd}`);
+      const out = (stdout || '') + (stderr ? '\n[stderr] ' + stderr : '');
+      const capped = out.length > 4000 ? out.slice(0, 4000) + '\n…（输出已截断）' : out;
+      const prefix = err ? `命令出错（exit ${err.code || '?'}）：\n` : '';
+      resolve(prefix + (guardOutput(capped) || '（无输出）'));
+    });
+  });
+}
+
+// 结构化执行：程序名 + 参数分开传，不经过 shell（防注入，优先用）
+function exec_argv({ program, args, cwd, timeout }) {
+  const prog = String(program || '').trim();
+  if (!prog) return '程序名为空';
+  if (DANGEROUS_PROGRAMS.includes(path.basename(prog).toLowerCase())) return `⚠️ 已拒绝执行程序：${prog}（可能造成不可逆后果）`;
+  const arr = Array.isArray(args) ? args.map(String) : [];
+  const t = Math.min(Math.max(Number(timeout) || 30, 1), 300);
+  return new Promise((resolve) => {
+    execFile(prog, arr, { cwd: cwd || undefined, timeout: t * 1000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err && err.killed) return resolve(`命令超时（${t} 秒）已终止：${prog}`);
+      const out = (stdout || '') + (stderr ? '\n[stderr] ' + stderr : '');
+      const capped = out.length > 4000 ? out.slice(0, 4000) + '\n…（输出已截断）' : out;
+      const prefix = err ? `命令出错（exit ${err.code || '?'}）：\n` : '';
+      resolve(prefix + (guardOutput(capped) || '（无输出）'));
+    });
+  });
+}
+
+// —— 长进程管理（spawn / manage_process）——
+const managed = {};
+let managedSeq = 0;
+function spawn({ command }) {
+  const cmd = String(command || '').trim();
+  if (!cmd) return '命令为空';
+  if (isDangerous(cmd)) return `⚠️ 已拒绝执行：${cmd}\n这条命令可能造成不可逆后果，请主人自己判断要不要手动执行。`;
+  // 清理已退出的旧进程，防无限累积
+  const keys = Object.keys(managed);
+  if (keys.length > 32) for (const k of keys) if (managed[k].exited) delete managed[k];
+
+  const id = 'p' + (++managedSeq);
+  const rec = { id, command: cmd, stdout: '', stderr: '', startedAt: Date.now(), exited: false, exitCode: null };
+  const proc = spawnProc(cmd, { shell: true });
+  proc.stdout && proc.stdout.on('data', (d) => { rec.stdout = (rec.stdout + d).slice(-100000); });
+  proc.stderr && proc.stderr.on('data', (d) => { rec.stderr = (rec.stderr + d).slice(-100000); });
+  proc.on('exit', (code) => { rec.exited = true; rec.exitCode = code; });
+  proc.on('error', (e) => { rec.stderr += '\n[spawn error] ' + e.message; rec.exited = true; });
+  managed[id] = rec;
+  return `已启动进程 ${id}：${cmd}`;
+}
+function manage_process({ process_id, action }) {
+  action = action || 'poll';
+  if (action === 'list') {
+    const entries = Object.entries(managed);
+    if (!entries.length) return '当前没有托管进程';
+    return '托管进程：\n' + entries.map(([id, r]) => `${id}\t${r.exited ? '已结束(exit ' + (r.exitCode ?? '?') + ')' : '运行中'}\t${r.command.slice(0, 60)}`).join('\n');
+  }
+  const rec = managed[process_id];
+  if (!rec) return `没有 ${process_id} 这个进程`;
+  if (action === 'kill') {
+    try { rec.proc && rec.proc.kill(); } catch (e) {}
+    rec.exited = true;
+    return `已发送终止信号给 ${process_id}`;
+  }
+  const status = rec.exited ? `已结束（exit ${rec.exitCode ?? '?'}）` : '运行中';
+  return `${process_id} ${status}\n--- stdout ---\n${guardOutput(rec.stdout.slice(-8000)) || '（暂无）'}\n--- stderr ---\n${guardOutput(rec.stderr.slice(-8000)) || '（暂无）'}`;
+}
+
+// —— 文件内容搜索（grep）——
+function safeRegex(s) {
+  try { return new RegExp(s, 'i'); }
+  catch {
+    try { return new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'); }
+    catch { return null; }
+  }
+}
+function grep({ pattern, dir }) {
+  const base = resolvePath(dir || '工作区');
+  const re = safeRegex(String(pattern || ''));
+  if (!re) return '搜索词无效';
+  const matches = [];
+  let searched = 0;
+  const MAX_FILES = 500, MAX_MATCHES = 50;
+
+  const queue = [base];
+  while (queue.length && searched < MAX_FILES && matches.length < MAX_MATCHES) {
+    const cur = queue.pop();
+    let entries;
+    try { entries = fs.readdirSync(cur, { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      if (matches.length >= MAX_MATCHES || searched >= MAX_FILES) break;
+      const fp = path.join(cur, e.name);
+      if (e.isDirectory()) { queue.push(fp); continue; }
+      let st;
+      try { st = fs.statSync(fp); } catch { continue; }
+      if (st.size > 512 * 1024) continue; // 跳过二进制/大文件
+      let content;
+      try { content = fs.readFileSync(fp, 'utf8'); } catch { continue; }
+      searched++;
+      const lines = content.split('\n');
+      for (let i = 0; i < lines.length && matches.length < MAX_MATCHES; i++) {
+        if (re.test(lines[i])) matches.push(`${path.relative(base, fp)}:${i + 1}: ${lines[i].trim().slice(0, 120)}`);
+      }
+    }
+  }
+
+  if (!matches.length) return `在 ${base} 里没找到「${pattern}」（搜了 ${searched} 个文件）`;
+  return `在 ${base} 找到 ${matches.length} 处匹配：\n` + matches.join('\n');
+}
+
+// —— 按文件名查找（glob）——
+function globToRegex(pattern) {
+  let re = '';
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i];
+    if (c === '*') {
+      if (pattern[i + 1] === '*') {
+        if (pattern[i + 2] === '/') { re += '(.*/)?'; i += 2; }
+        else { re += '.*'; i += 1; }
+      } else { re += '[^/]*'; }
+    } else if (c === '?') { re += '[^/]'; }
+    else { re += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+  }
+  return new RegExp('^' + re + '$', 'i');
+}
+function glob({ pattern, dir }) {
+  const base = resolvePath(dir || '工作区');
+  if (!pattern) {
+    try {
+      const items = fs.readdirSync(base, { withFileTypes: true });
+      if (!items.length) return `${base} 是空目录`;
+      return `${base}（${items.length} 项）：\n` + items.map((it) => (it.isDirectory() ? '[目录] ' : '') + it.name).join('\n');
+    } catch (e) { return `列不出目录 ${base}：${e.message}`; }
+  }
+  const re = globToRegex(String(pattern).replace(/\\/g, '/'));
+  const results = [];
+  let searched = 0;
+  const MAX_FILES = 2000, MAX_RESULTS = 100;
+
+  const queue = [base];
+  while (queue.length && searched < MAX_FILES && results.length < MAX_RESULTS) {
+    const cur = queue.pop();
+    let entries;
+    try { entries = fs.readdirSync(cur, { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      if (results.length >= MAX_RESULTS || searched >= MAX_FILES) break;
+      const fp = path.join(cur, e.name);
+      if (e.isDirectory()) { queue.push(fp); continue; }
+      searched++;
+      const rel = path.relative(base, fp).replace(/\\/g, '/');
+      if (re.test(rel)) results.push(rel);
+    }
+  }
+
+  if (!results.length) return `在 ${base} 没找到匹配「${pattern}」的文件`;
+  return `匹配「${pattern}」的 ${results.length} 个文件：\n` + results.join('\n');
+}
+
 // —— 分发 ——
-const handlers = { get_time, set_reminder, add_todo, list_todo, complete_todo, open_url, open_app, get_weather, remember, set_preference, correct, list_reminders, cancel_reminder, read_file, write_file, list_dir, get_clipboard, set_clipboard };
+const handlers = { get_time, set_reminder, add_todo, list_todo, complete_todo, open_url, open_app, get_weather, remember, set_preference, correct, list_reminders, cancel_reminder, read_file, write_file, get_clipboard, set_clipboard, run_command, exec_argv, spawn, manage_process, grep, glob };
 async function execute(name, args) {
   const fn = handlers[name];
   if (!fn) return `没有「${name}」这个工具`;
