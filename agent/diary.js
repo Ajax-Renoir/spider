@@ -32,7 +32,7 @@ async function ensureYesterdayDiary() {
 
     const prompt = `请以一只叫 Spider 的橘猫的口吻，用中文写一篇关于昨天（${y}）的简短日记，80~150 字。
 内容包含：昨天${DIARY_CITY}的天气（${weather}）、昨天你的心情（${mood}）、你和主人的日常互动（可适当想象）、一句小感想。
-第一人称、软萌猫语气、可带"喵"。只输出正文，不要标题。`;
+第一人称、猫语气自然克制：少用叠词，不要过多亲昵的动作描写，像记日常一样平实。只输出正文，不要标题。`;
     const res = await chat([{ role: 'user', content: prompt }]);
     const content = (res.choices[0].message.content || '').trim();
 

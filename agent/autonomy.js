@@ -184,7 +184,7 @@ function onMinute(idleSec) {
 // —— 启动问候 / 调试触发（从 triggers.js 迁移）——
 async function speak(situation) {
   const prompt = `你是 Spider，一只橘猫。现在你要主动对主人说话（不是回应，是主动发起）。情境：${situation}。
-用 Spider 的口吻说 1~2 句，中文，软萌直接，可带"喵"。只输出要说的话。`;
+用 Spider 的口吻说 1~2 句，中文，软萌直接，可带"喵"，但少用叠词、亲昵有节制。只输出要说的话。`;
   const res = await chat([{ role: 'user', content: prompt }]);
   return (res.choices[0].message.content || '').trim();
 }
